@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 import os
+import sys
 import shutil
 import subprocess
-import sys
+import logging
+import platform
 
-# Standard GPTK Controller-Mapping für R36S / PortMaster (World of Padman)
+# Timestamps & Log-Level konfigurieren
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
 GPTK_CONTENT = """\
 back = esc
 start = enter
@@ -47,50 +55,66 @@ $GPTOKEYB "wop.aarch64" -c "./worldofpadman.gptk" &
 $ESUDO killall gptokeyb
 """
 
-def main():
-    print("=== Starte ARM64 Patch & Build Prozess ===")
+def run_cmd(cmd, cwd=None):
+    """Führt Konsolenbefehle aus und fängt stderr/stdout für maximale Diagnose ab."""
+    logging.info(f"Führe aus: {' '.join(cmd)}")
+    res = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
     
+    if res.stdout.strip():
+        logging.info(f"[STDOUT]\n{res.stdout.strip()}")
+    
+    if res.returncode != 0:
+        logging.error(f"[FEHLER] Befehl fehlgeschlagen mit Exit-Code {res.returncode}")
+        logging.error(f"[STDERR]\n{res.stderr.strip()}")
+        sys.exit(res.returncode)
+
+def main():
+    logging.info("=== DIAGNOSE & BUILD START ===")
+    logging.info(f"Python: {sys.version.split()[0]} | OS: {platform.platform()} | Arch: {platform.machine()}")
+    logging.info(f"Arbeitsverzeichnis: {os.getcwd()}")
+    logging.info(f"Verfügbare CPU-Kerne: {os.cpu_count()}")
+
     work_dir = os.getcwd()
     build_dir = os.path.join(work_dir, "build")
     dist_dir = os.path.join(work_dir, "dist", "ports", "worldofpadman")
     ports_root = os.path.join(work_dir, "dist", "ports")
-    
+
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(dist_dir, exist_ok=True)
 
-    # 1. CMake Konfiguration und Build
-    print("-> Konfiguriere CMake...")
-    subprocess.run([
+    # 1. CMake Konfiguration
+    run_cmd([
         "cmake", "-B", build_dir, "-S", work_dir,
         "-DCMAKE_BUILD_TYPE=Release",
         "-DUSE_INTERNAL_LIBS=OFF"
-    ], check=True)
+    ])
 
-    print("-> Kompiliere Binaries...")
-    subprocess.run(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)], check=True)
+    # 2. Kompilierung
+    run_cmd(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)])
 
-    # 2. GPTK Datei direkt ins Artifact schreiben
+    # 3. Dateierstellung & Validierung
     gptk_path = os.path.join(dist_dir, "worldofpadman.gptk")
-    print(f"-> Schreiben der GPTK-Datei nach: {gptk_path}")
     with open(gptk_path, "w", encoding="utf-8") as f:
         f.write(GPTK_CONTENT)
+    logging.info(f"GPTK-Datei erfolgreich geschrieben ({os.path.getsize(gptk_path)} Bytes)")
 
-    # 3. Start-Script (.sh) erstellen
     sh_path = os.path.join(ports_root, "World of Padman.sh")
-    print(f"-> Schreiben des Start-Skripts nach: {sh_path}")
     with open(sh_path, "w", encoding="utf-8") as f:
         f.write(LAUNCHER_SCRIPT)
     os.chmod(sh_path, 0o755)
+    logging.info(f"Start-Skript geschrieben und ausführbar gemacht: {sh_path}")
 
-    # 4. Erzeugte Binary kopieren
-    compiled_binary = os.path.join(build_dir, "wop.aarch64")
-    if os.path.exists(compiled_binary):
+    compiled_bin = os.path.join(build_dir, "wop.aarch64")
+    if os.path.exists(compiled_bin):
         dest_bin = os.path.join(dist_dir, "wop.aarch64")
-        shutil.copy2(compiled_binary, dest_bin)
+        shutil.copy2(compiled_bin, dest_bin)
         os.chmod(dest_bin, 0o755)
-        print(f"-> Binary kopiert nach: {dest_bin}")
+        logging.info(f"Binary verifiziert & kopiert: {dest_bin} ({os.path.getsize(dest_bin)} Bytes)")
+    else:
+        logging.error("CRITICAL: Erzeugte Binary 'wop.aarch64' wurde im Build-Ordner nicht gefunden!")
+        sys.exit(1)
 
-    print("=== Build & Packaging erfolgreich abgeschlossen ===")
+    logging.info("=== BUILD ERFOLGREICH ABGESCHLOSSEN ===")
 
 if __name__ == "__main__":
     main()
