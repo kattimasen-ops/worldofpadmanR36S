@@ -39,7 +39,7 @@ jobs:
 
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential git pkg-config ca-certificates wget file python3 cmake ccache \
+            build-essential git pkg-config ca-certificates wget curl file python3 cmake ccache \
             libsdl2-dev libfreetype6-dev libjpeg-dev libpng-dev zlib1g-dev \
             libogg-dev libvorbis-dev libopus-dev libopusfile-dev \
             libcurl4-openssl-dev libopenal-dev \
