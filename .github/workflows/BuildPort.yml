@@ -1,59 +1,89 @@
-name: Construct World of Padman for R36S
+name: Construct World of Padman for RK3326 (R36S)
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-wop.yml'
+      - '.github/scripts/patch_arm64.py'
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm64
-    container:
-      image: ubuntu:20.04
-
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
     steps:
-      - name: Install System Dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y \
-              git \
-              sudo \
-              curl \
-              python3 \
-              cmake \
-              build-essential \
-              libsdl2-dev \
-              libopenal-dev \
-              libcurl4-openssl-dev \
-              libjpeg-dev \
-              libvorbis-dev \
-              libogg-dev \
-              ccache \
-              binutils
-
-      - name: Checkout Repository
+      # WICHTIG: checkt EUER eigenes geforktes Repo aus (nicht mehr
+      # extra klonen wie bei Smokin' Guns, wo die Engine ein separates
+      # Repo war) - inklusive Git LFS, das WoP fuer seine Assets nutzt
+      # (steht so im offiziellen README: "cloned ... with git-lfs
+      # installed"). Ohne lfs:true bekommt ihr nur Platzhalter-Dateien.
+      - name: Checkout (mit Git LFS)
         uses: actions/checkout@v4
-
-      - name: Cache ccache
-        uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-patch-arm64-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-patch-arm64-
+          lfs: true
+          submodules: recursive
 
-      - name: Make Patch Script Executable
-        run: chmod +x patch_arm64.py
+      - name: Set up QEMU fuer arm64-Emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-      - name: Run Patch Script
-        run: python3 patch_arm64.py
+      - name: Write in-container build script
+        run: |
+          mkdir -p work
+          cp .github/scripts/patch_arm64.py work/patch_arm64.py
+          cat > work/build.sh << 'BUILD_SCRIPT_EOF'
+          #!/bin/bash
+          set -euo pipefail
+          set -x
+          export DEBIAN_FRONTEND=noninteractive
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential git pkg-config ca-certificates wget file python3 cmake ccache \
+            libsdl2-dev libfreetype6-dev libjpeg-dev libpng-dev zlib1g-dev \
+            libogg-dev libvorbis-dev libopus-dev libopusfile-dev \
+            libcurl4-openssl-dev libopenal-dev \
+            libgbm-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev \
+            libx11-dev libxext-dev libgl1-mesa-dev libglu1-mesa-dev
+          git config --global --add safe.directory '*'
+
+          # CMake-Mindestversion sicherstellen (Ubuntu 20.04 liefert nur
+          # 3.16 aus - im Smokin'-Guns-Projekt hatte eine zu alte CMake-
+          # Version bereits einmal den Build blockiert, "CheckCompilerFlag"
+          # unbekannt).
+          CMAKE_VERSION=3.28.3
+          wget -q "https://cmake.org/files/v3.28/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz" -O /tmp/cmake.tar.gz
+          mkdir -p /opt/cmake
+          tar -xzf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1
+          export PATH="/opt/cmake/bin:$PATH"
+
+          ccache -M 2G
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+
+          cd /work
+          python3 patch_arm64.py
+          BUILD_SCRIPT_EOF
+          chmod +x work/build.sh
+
+      - name: Build inside Ubuntu 20.04 aarch64 container (GLIBC 2.31)
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "${{ github.workspace }}":/work/src \
+            -v "${{ github.workspace }}/work":/work/scripts \
+            -w /work/src \
+            ubuntu:20.04 bash -c "cp /work/scripts/build.sh /work/scripts/patch_arm64.py /work/src/ && bash build.sh"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: worldofpadman-r36s-port
-          path: dist/ports/
+          name: worldofpadman-r36s-arm64
+          path: |
+            out/game/
+            out/libs.aarch64/
           if-no-files-found: error
