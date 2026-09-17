@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '.github/workflows/build-wop.yml'
+      - '.github/workflows/BuildPort.yml'
       - '.github/scripts/patch_arm64.py'
 
 permissions:
