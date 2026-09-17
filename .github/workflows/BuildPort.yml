@@ -30,16 +30,38 @@ jobs:
             -e CXX="ccache g++" \
             arm64v8/ubuntu:20.04 bash -c "
             export DEBIAN_FRONTEND=noninteractive
+            echo '=== CONTAINER HARDWARE CHECK ==='
+            free -m
+            df -h /work
+            
+            echo '=== APT INSTALLATION ==='
             apt-get update -qq && apt-get install -y --no-install-recommends \
               build-essential cmake python3 git libsdl2-dev libopenal-dev \
               libcurl4-openssl-dev ccache
+            
             ccache -M 2G
+            echo '=== CCACHE STATUS VOR BUILD ==='
+            ccache -s
+            
             cd /work
             python3 .github/scripts/patch_arm64.py
+            
+            echo '=== CCACHE STATUS NACH BUILD ==='
+            ccache -s
           "
 
-      - name: Artifacts hochladen
+      - name: Artifacts hochladen (Erfolg)
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: WorldOfPadman-R36S
           path: dist/
+
+      - name: Debug Logs hochladen (Fehlerfall)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Build-Failure-Logs
+          path: |
+            build/CMakeFiles/*.log
+            build/CMakeCache.txt
