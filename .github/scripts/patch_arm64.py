@@ -1,129 +1,132 @@
 #!/usr/bin/env python3
+"""
+World of Padman - ARM64/RK3326-Build (R36S), angelehnt an das
+Smokin'-Guns-Projekt: native .so-Module (kein QVM), natives GL4ES,
+natives SDL statt Uebersetzungsschicht wo moeglich.
+
+WICHTIGER STAND: World of PADMAN baut ueber CMake (bestaetigt gegen das
+echte Repo-README), nicht ueber eine klassische ioquake3-Makefile wie
+Smokin' Guns. Die exakten CMake-Optionsnamen fuer GLES/native Module
+sind NICHT verifiziert - dieses Skript listet sie deshalb per
+"cmake -LAH" auf, bevor es irgendetwas konfiguriert, statt Namen zu
+raten. Bitte die Ausgabe im ersten Lauf pruefen und ggf. die
+markierten TODO-Stellen unten anpassen.
+"""
+
 import os
-import sys
-import shutil
+import re
 import subprocess
-import logging
-import platform
+import sys
 
-# Timestamps & Log-Level konfigurieren
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
 
-GPTK_CONTENT = """\
-back = esc
-start = enter
-a = mouse_left
-b = space
-x = c
-y = r
-l1 = mouse_right
-l2 = e
-r1 = mouse_left
-r2 = ctrl
-up = w
-down = s
-left = a
-right = d
-left_analog_up = w
-left_analog_down = s
-left_analog_left = a
-left_analog_right = d
-right_analog_up = mouse_movement_up
-right_analog_down = mouse_movement_down
-right_analog_left = mouse_movement_left
-right_analog_right = mouse_movement_right
-deadzone_mode = axial
-deadzone = 2000
-deadzone_scale = 8
-deadzone_delay = 16
-"""
+def run(cmd, cwd=None, check=True):
+    print(f"[RUN] {' '.join(cmd)}")
+    return subprocess.run(cmd, cwd=cwd, check=check)
 
-LAUNCHER_SCRIPT = """\
-#!/bin/bash
-XDG_DATA_HOME="$APPDATA"
-export XDG_DATA_HOME
-
-GAMEDIR="$4/worldofpadman"
-cd "$GAMEDIR" || exit
-
-$GPTOKEYB "wop.aarch64" -c "./worldofpadman.gptk" &
-./wop.aarch64 +set fs_basepath "$GAMEDIR" +set com_hunkMegs 128
-$ESUDO killall gptokeyb
-"""
-
-def run_cmd(cmd, cwd=None):
-    """Führt Konsolenbefehle aus und fängt stderr/stdout für maximale Diagnose ab."""
-    logging.info(f"Führe aus: {' '.join(cmd)}")
-    res = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
-    
-    if res.stdout.strip():
-        logging.info(f"[STDOUT]\n{res.stdout.strip()}")
-    
-    if res.returncode != 0:
-        logging.error(f"[FEHLER] Befehl fehlgeschlagen mit Exit-Code {res.returncode}")
-        logging.error(f"[STDERR]\n{res.stderr.strip()}")
-        sys.exit(res.returncode)
 
 def main():
-    logging.info("=== DIAGNOSE & BUILD START ===")
-    logging.info(f"Python: {sys.version.split()[0]} | OS: {platform.platform()} | Arch: {platform.machine()}")
-    logging.info(f"Arbeitsverzeichnis: {os.getcwd()}")
-    logging.info(f"Verfügbare CPU-Kerne: {os.cpu_count()}")
-
     work_dir = os.getcwd()
+    gl4es_dir = os.path.join(work_dir, "gl4es")
     build_dir = os.path.join(work_dir, "build")
-    dist_dir = os.path.join(work_dir, "dist", "ports", "worldofpadman")
-    ports_root = os.path.join(work_dir, "dist", "ports")
+    out_dir = os.path.join(work_dir, "out")
+    libs_out = os.path.join(out_dir, "libs.aarch64")
+    game_out = os.path.join(out_dir, "game")
+    os.makedirs(libs_out, exist_ok=True)
+    os.makedirs(game_out, exist_ok=True)
 
-    os.makedirs(build_dir, exist_ok=True)
-    os.makedirs(dist_dir, exist_ok=True)
+    run(["git", "config", "--global", "--add", "safe.directory", "*"])
 
-    # Sichere ARM64-Optimierungen für den R36S (explizit ohne fehlerhaftes LTO)
-    optimizations = "-O3 -march=armv8-a"
+    optimize = (
+        "-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -pipe -fomit-frame-pointer "
+        "-ffast-math -ftree-vectorize -fno-semantic-interposition -fno-plt "
+        "-fno-stack-protector -fno-asynchronous-unwind-tables "
+        "-fmerge-all-constants -falign-functions=16 -falign-loops=16 "
+        "-DNDEBUG -w -fcommon -mno-outline-atomics -funroll-loops"
+        # Bewusst NICHT ergaenzt: -flto (dokumentierte ARM64-Absturzursache
+        # bei ioquake3-Engines in diesem Projekt), -mfpu=... (ungueltig
+        # unter AArch64).
+    )
 
-    # 1. CMake Konfiguration mit Performance-Flags und korrekten Abhängigkeiten
-    run_cmd([
-        "cmake", "-B", build_dir, "-S", work_dir,
+    # =========================================================
+    # SCHRITT 1: GL4ES bauen (identisch zum Smokin'-Guns-Ansatz)
+    # =========================================================
+    if not os.path.isdir(gl4es_dir):
+        run(["git", "clone", "--depth=1", "https://github.com/ptitSeb/gl4es.git", gl4es_dir])
+    gl4es_build = os.path.join(gl4es_dir, "build")
+    os.makedirs(gl4es_build, exist_ok=True)
+    run([
+        "cmake", "..",
         "-DCMAKE_BUILD_TYPE=Release",
-        "-DUSE_INTERNAL_LIBS=OFF",
-        f"-DCMAKE_C_FLAGS={optimizations}",
-        f"-DCMAKE_CXX_FLAGS={optimizations}"
-    ])
+        f"-DCMAKE_C_FLAGS={optimize}",
+        "-DNOX11=ON", "-DGLX_STUBS=ON", "-DEGL_WRAPPER=ON", "-DGBM=ON",
+        "-DSTATICLIB=OFF", "-DDEFAULT_ES=2", "-DNOERROR=ON",
+    ], cwd=gl4es_build)
+    run(["make", f"-j{os.cpu_count() or 2}"], cwd=gl4es_build)
 
-    # 2. Kompilierung
-    run_cmd(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)])
+    for name in ("libGL.so.1", "libEGL.so.1"):
+        found = None
+        for root, _, files in os.walk(gl4es_dir):
+            if name in files:
+                found = os.path.join(root, name)
+                break
+        if found:
+            run(["cp", found, os.path.join(libs_out, name)])
+        else:
+            print(f"[WARN] {name} nicht gefunden - gl4es-Build pruefen.")
 
-    # 3. Dateierstellung & Validierung
-    gptk_path = os.path.join(dist_dir, "worldofpadman.gptk")
-    with open(gptk_path, "w", encoding="utf-8") as f:
-        f.write(GPTK_CONTENT)
-    logging.info(f"GPTK-Datei erfolgreich geschrieben ({os.path.getsize(gptk_path)} Bytes)")
+    # =========================================================
+    # SCHRITT 2: World of Padman selbst per CMake konfigurieren
+    # =========================================================
+    os.makedirs(build_dir, exist_ok=True)
 
-    sh_path = os.path.join(ports_root, "World of Padman.sh")
-    with open(sh_path, "w", encoding="utf-8") as f:
-        f.write(LAUNCHER_SCRIPT)
-    os.chmod(sh_path, 0o755)
-    logging.info(f"Start-Skript geschrieben und ausführbar gemacht: {sh_path}")
+    print("=" * 70)
+    print("[DIAGNOSE] Verfuegbare CMake-Cache-Variablen (cmake -LAH):")
+    print("[DIAGNOSE] Bitte pruefen, ob es Optionen fuer GLES/native")
+    print("[DIAGNOSE] Module gibt (z.B. etwas mit GLES, RENDERER, ARM,")
+    print("[DIAGNOSE] NEON) - die TODO-Stellen unten ggf. entsprechend")
+    print("[DIAGNOSE] anpassen, statt die aktuell eingetragenen Namen")
+    print("[DIAGNOSE] blind zu vertrauen.")
+    print("=" * 70)
+    run(["cmake", "-S", work_dir, "-B", build_dir, "-LAH"], check=False)
+    print("=" * 70)
 
-    compiled_bin = os.path.join(build_dir, "wop.aarch64")
-    if os.path.exists(compiled_bin):
-        dest_bin = os.path.join(dist_dir, "wop.aarch64")
-        shutil.copy2(compiled_bin, dest_bin)
-        os.chmod(dest_bin, 0o755)
-        
-        # Sicheres Stripping zur Reduzierung der Dateigröße
-        run_cmd(["strip", "--strip-unneeded", dest_bin])
-        
-        logging.info(f"Binary verifiziert, optimiert & kopiert: {dest_bin} ({os.path.getsize(dest_bin)} Bytes)")
-    else:
-        logging.error("CRITICAL: Erzeugte Binary 'wop.aarch64' wurde im Build-Ordner nicht gefunden!")
-        sys.exit(1)
+    cmake_args = [
+        "cmake", "-S", work_dir, "-B", build_dir,
+        "-DCMAKE_BUILD_TYPE=Release",
+        f"-DCMAKE_C_FLAGS={optimize}",
+        f"-DCMAKE_CXX_FLAGS={optimize}",
+        "-DCMAKE_SYSTEM_PROCESSOR=aarch64",
+        # TODO: exakte Bezeichnung im echten Repo per obiger Diagnose
+        # verifizieren, falls hier ein Fehler kommt (Option existiert
+        # ggf. unter anderem Namen oder gar nicht in diesem Fork-Stand).
+        "-DUSE_RENDERER_DLOPEN=ON",
+        "-DBUILD_GAME_SO=ON",
+        "-DBUILD_GAME_QVM=OFF",
+    ]
+    run(cmake_args)
+    run(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)])
 
-    logging.info("=== BUILD ERFOLGREICH ABGESCHLOSSEN ===")
+    # =========================================================
+    # SCHRITT 3: Ergebnisse einsammeln (find-basiert, keine
+    # hartkodierten Dateinamen - Namenskonvention von WoP nicht
+    # 1:1 identisch mit Smokin' Guns verifiziert)
+    # =========================================================
+    print("[INFO] Gefundene Binaries/Module nach dem Build:")
+    for root, _, files in os.walk(build_dir):
+        for f in files:
+            if f.endswith(".so") or (os.access(os.path.join(root, f), os.X_OK)
+                                      and not f.endswith((".cmake", ".txt", ".o"))):
+                full = os.path.join(root, f)
+                print(f"  {full}")
+                run(["cp", full, game_out])
+
+    print("[DONE] Build abgeschlossen. Pruefe die DIAGNOSE-Ausgabe oben und")
+    print("[DONE] den Inhalt von out/game - falls dort keine sinnvolle Client-")
+    print("[DONE] Binary und keine Renderer-/Game-.so-Dateien auftauchen,")
+    print("[DONE] muessen die TODO-markierten CMake-Optionen oben korrigiert")
+    print("[DONE] werden - dafuer die DIAGNOSE-Liste der echten cmake -LAH-")
+    print("[DONE] Ausgabe verwenden, nicht raten.")
+
 
 if __name__ == "__main__":
     main()
