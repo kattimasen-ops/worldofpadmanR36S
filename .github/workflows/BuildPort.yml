@@ -1,0 +1,51 @@
+name: Create World of Padman ARM64
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Workflow Repository
+        uses: actions/checkout@v4
+
+      - name: Clone World of Padman Source Code
+        run: |
+          git clone --depth=1 https://github.com/worldofpadman/wop-engine.git temp_source
+          cp -r temp_source/* .
+          rm -rf temp_source
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Cache ccache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-aarch64-wop-${{ github.sha }}
+          restore-keys: |
+            ccache-aarch64-wop-
+
+      - name: Build inside ARM64 Docker Container
+        run: |
+          mkdir -p .ccache
+          docker run --rm --privileged --platform linux/arm64 \
+            -v ${{ github.workspace }}:/work \
+            -v ${{ github.workspace }}/.ccache:/root/.ccache \
+            -e CC="ccache gcc" \
+            arm64v8/ubuntu:20.04 bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update && apt-get install -y build-essential python3 git libsdl2-dev libopenal-dev libcurl4-openssl-dev python3-urllib3 ccache
+            ccache -M 2G
+            cd /work
+            python3 .github/scripts/patch_arm64.py
+          "
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-of-padman-arm64
+          path: build/release-linux-aarch64/
