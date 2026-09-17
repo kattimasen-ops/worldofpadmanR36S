@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 World of Padman - ARM64/RK3326-Build (R36S):
-Native .so-Module, natives GL4ES, Mali v11.7 (r11p0) Integration und
-PortMaster-Startskript mit Engine-Optimierungen.
+Native .so-Module, natives GL4ES, Mali v11.7 (r11p0) Integration,
+automatische Symbol-Bereinigung (strip) und PortMaster-Startskript.
 """
 
 import os
@@ -197,7 +197,9 @@ def main():
                 found = os.path.join(root, name)
                 break
         if found:
-            run(["cp", found, os.path.join(libs_out, name)])
+            dest = os.path.join(libs_out, name)
+            run(["cp", found, dest])
+            run(["strip", "--strip-unneeded", dest], check=False)
         else:
             print(f"[WARN] {name} nicht gefunden - gl4es-Build pruefen.")
 
@@ -206,29 +208,28 @@ def main():
     # =========================================================
     print("[INFO] Lade Mali v11.7 (r11p0) Treiber-Bibliothek herunter...")
     mali_lib_path = os.path.join(libs_out, "libmali.so")
-    mali_url = "https://github.com/rockchip-linux/libmali/raw/master/lib/aarch64-linux-gnu/libmali-midgard-t860-r11p0-gbm.so"
+    mali_url = "https://raw.githubusercontent.com/rockchip-linux/libmali/master/lib/aarch64-linux-gnu/libmali-midgard-t860-r11p0-gbm.so"
 
     try:
-        run(["wget", "-q", "-O", mali_lib_path, mali_url])
+        run(["curl", "-sSL", "-f", "-o", mali_lib_path, mali_url])
+        
+        if not os.path.exists(mali_lib_path) or os.path.getsize(mali_lib_path) == 0:
+            raise RuntimeError("Heruntergeladene libmali.so ist 0 KB groß!")
+
         for egl_file in ["libEGL.so", "libEGL.so.1", "libGLESv2.so", "libGLESv2.so.2"]:
             target_path = os.path.join(libs_out, egl_file)
             if os.path.exists(target_path) or os.path.islink(target_path):
                 os.remove(target_path)
             os.symlink("libmali.so", target_path)
-        print("[INFO] Mali v11.7 r11p0 und Symlinks erfolgreich in libs.aarch64 angelegt.")
+        print(f"[INFO] Mali v11.7 r11p0 ({os.path.getsize(mali_lib_path)} Bytes) und Symlinks erfolgreich angelegt.")
     except Exception as e:
-        print(f"[WARN] Fehler beim Herunterladen/Verknuepfen von Mali v11.7: {e}")
+        print(f"[ERROR] Fehler beim Herunterladen/Verknuepfen von Mali v11.7: {e}")
+        sys.exit(1)
 
     # =========================================================
     # SCHRITT 2: World of Padman selbst per CMake konfigurieren
     # =========================================================
     os.makedirs(build_dir, exist_ok=True)
-
-    print("=" * 70)
-    print("[DIAGNOSE] Verfuegbare CMake-Cache-Variablen (cmake -LAH):")
-    print("=" * 70)
-    run(["cmake", "-S", work_dir, "-B", build_dir, "-LAH"], check=False)
-    print("=" * 70)
 
     cmake_args = [
         "cmake", "-S", work_dir, "-B", build_dir,
@@ -244,11 +245,11 @@ def main():
     run(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)])
 
     # =========================================================
-    # SCHRITT 3: Ergebnisse einsammeln
+    # SCHRITT 3: Ergebnisse einsammeln & Debug-Symbole entfernen
     # =========================================================
     print("[INFO] Sammle Binaries und Module ein...")
-    search_paths = [build_dir, work_dir]
-    exclude_dirs = {".git", "gl4es", "out", "work", "build", ".github"}
+    search_paths = [build_dir]
+    exclude_dirs = {".git", "gl4es", "out", "work", ".github", "CMakeFiles"}
 
     collected_files = set()
 
@@ -258,9 +259,14 @@ def main():
             
             for f in files:
                 full_path = os.path.join(root, f)
+                
+                # Ignoriere CMake-interne Hilfsdateien
+                if f.endswith((".cmake", ".txt", ".o", ".py", ".sh", ".h", ".c", ".cpp", ".a", ".check_cache")):
+                    continue
+
                 is_so = f.endswith(".so")
-                is_executable = os.access(full_path, os.X_OK) and not f.endswith((".cmake", ".txt", ".o", ".py", ".sh", ".h", ".c", ".cpp"))
-                is_wop_bin = "wop" in f.lower() or "renderer" in f.lower() or "cgame" in f.lower() or "ui" in f.lower() or "qagame" in f.lower()
+                is_executable = os.access(full_path, os.X_OK) and not os.path.islink(full_path)
+                is_wop_bin = any(k in f.lower() for k in ("wop", "renderer", "cgame", "ui", "qagame"))
 
                 if (is_so or is_executable or is_wop_bin) and os.path.isfile(full_path):
                     if full_path not in collected_files:
@@ -268,6 +274,8 @@ def main():
                         dest = os.path.join(game_out, f)
                         print(f"  Kopiere {full_path} -> {dest}")
                         run(["cp", full_path, dest])
+                        # Debug-Symbole entfernen für minimale Dateigröße
+                        run(["strip", "--strip-unneeded", dest], check=False)
 
     # =========================================================
     # SCHRITT 4: GPTK und Start-Skript (.sh) für PortMaster erstellen
