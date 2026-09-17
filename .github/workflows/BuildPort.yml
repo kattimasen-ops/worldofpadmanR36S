@@ -1,67 +1,45 @@
-name: Construct World of Padman R36S (ARM64)
+name: Construct World of Padman for R36S
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build-arm64:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-24.04-arm64
+    # Nutzt Ubuntu 20.04 um kompatible glibc-Abhängigkeiten für den R36S zu garantieren
+    container:
+      image: ubuntu:20.04
 
     steps:
-      - name: Repository auschecken
+      - name: Install Git & Sudo (Prerequisites)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git sudo curl
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: QEMU für ARM64 einrichten
-        uses: docker/setup-qemu-action@v3
-
-      - name: Ccache Ordner erstellen
-        run: mkdir -p .ccache
-
-      - name: Build im ARM64 Docker Container
-        run: |
-          docker run --rm --privileged --platform linux/arm64 \
-            -v ${{ github.workspace }}:/work \
-            -v ${{ github.workspace }}/.ccache:/root/.ccache \
-            -e CC="ccache gcc" \
-            -e CXX="ccache g++" \
-            arm64v8/ubuntu:20.04 bash -c "
-            export DEBIAN_FRONTEND=noninteractive
-            echo '=== CONTAINER HARDWARE CHECK ==='
-            free -m
-            df -h /work
-            
-            echo '=== APT INSTALLATION ==='
-            apt-get update -qq && apt-get install -y --no-install-recommends \
-              build-essential cmake python3 git libsdl2-dev libopenal-dev \
-              libcurl4-openssl-dev ccache
-            
-            ccache -M 2G
-            echo '=== CCACHE STATUS VOR BUILD ==='
-            ccache -s
-            
-            cd /work
-            python3 .github/scripts/patch_arm64.py
-            
-            echo '=== CCACHE STATUS NACH BUILD ==='
-            ccache -s
-          "
-
-      - name: Artifacts hochladen (Erfolg)
-        uses: actions/upload-artifact@v4
-        if: success()
+      - name: Cache ccache
+        uses: actions/cache@v4
         with:
-          name: WorldOfPadman-R36S
-          path: dist/
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-ubuntu2004-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-ubuntu2004-
 
-      - name: Debug Logs hochladen (Fehlerfall)
+      - name: Make Build Script Executable
+        run: chmod +x build.sh
+
+      - name: Build World of Padman
+        run: ./build.sh
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
-          name: Build-Failure-Logs
-          path: |
-            build/CMakeFiles/*.log
-            build/CMakeCache.txt
+          name: worldofpadman-r36s-optimized
+          path: artifact/
+          if-no-files-found: error
