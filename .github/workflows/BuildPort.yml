@@ -16,11 +16,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 240
     steps:
-      # WICHTIG: checkt EUER eigenes geforktes Repo aus (nicht mehr
-      # extra klonen wie bei Smokin' Guns, wo die Engine ein separates
-      # Repo war) - inklusive Git LFS, das WoP fuer seine Assets nutzt
-      # (steht so im offiziellen README: "cloned ... with git-lfs
-      # installed"). Ohne lfs:true bekommt ihr nur Platzhalter-Dateien.
       - name: Checkout (mit Git LFS)
         uses: actions/checkout@v4
         with:
@@ -52,10 +47,6 @@ jobs:
             libx11-dev libxext-dev libgl1-mesa-dev libglu1-mesa-dev
           git config --global --add safe.directory '*'
 
-          # CMake-Mindestversion sicherstellen (Ubuntu 20.04 liefert nur
-          # 3.16 aus - im Smokin'-Guns-Projekt hatte eine zu alte CMake-
-          # Version bereits einmal den Build blockiert, "CheckCompilerFlag"
-          # unbekannt).
           CMAKE_VERSION=3.28.3
           wget -q "https://cmake.org/files/v3.28/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz" -O /tmp/cmake.tar.gz
           mkdir -p /opt/cmake
