@@ -148,14 +148,60 @@ seta s_khz "22"
         f.write(content)
     print(f"[GENERATE] {cfg_path} erstellt.")
 
-def create_launcher_script(target_dir):
+def create_gptk_file(target_dir):
     os.makedirs(target_dir, exist_ok=True)
-    sh_path = os.path.join(target_dir, "World of Padman.sh")
+    gptk_path = os.path.join(target_dir, "wop.gptk")
+    content = """back = esc
+start = enter
+a = space
+b = c
+x = r
+y = e
+l1 = mouse2
+l2 = f
+r1 = mouse1
+r2 = space
+up = w
+down = s
+left = a
+right = d
+left_analog_up = w
+left_analog_down = s
+left_analog_left = a
+left_analog_right = d
+right_analog_up = mouse_movement_up
+right_analog_down = mouse_movement_down
+right_analog_left = mouse_movement_left
+right_analog_right = mouse_movement_right
+deadzone_mode = axial
+deadzone = 2000
+deadzone_scale = 8
+deadzone_delay = 16
+"""
+    with open(gptk_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[GENERATE] {gptk_path} erstellt.")
+
+def create_launcher_script(root_artifact_dir):
+    os.makedirs(root_artifact_dir, exist_ok=True)
+    sh_path = os.path.join(root_artifact_dir, "World of Padman.sh")
     content = """#!/bin/bash
-# World of Padman Startskript für M9 Pro (RK3326 / Arkos4clones)
+# World of Padman PortMaster Launcher für M9 Pro (RK3326 / Arkos4clones)
 
 XDG_DATA_HOME="$HOME/.local/share"
 export XDG_DATA_HOME
+
+if [ -d "/opt/system/Tools/PortMaster/" ]; then
+  CONTROLDIR="/opt/system/Tools/PortMaster"
+elif [ -d "/opt/tools/PortMaster/" ]; then
+  CONTROLDIR="/opt/tools/PortMaster"
+else
+  CONTROLDIR="/usr/local/bin"
+fi
+
+source $CONTROLDIR/control.txt
+[ -f "${CONTROLDIR}/modtesting.txt" ] && source "${CONTROLDIR}/modtesting.txt"
+get_controls
 
 GAMEDIR="/roms/ports/wop"
 if [ ! -d "$GAMEDIR" ]; then
@@ -165,9 +211,7 @@ cd "$GAMEDIR"
 
 exec > >(tee "$GAMEDIR/log.txt") 2>&1
 
-export SDL_GAMECONTROLLERCONFIG_FILE="$GAMEDIR/gamecontrollerdb.txt"
-export HOTKEY="back"
-
+# Maximale GL4ES Direct-Translation Flags für Mali-G31 GPU
 export LIBGL_FB=2
 export LIBGL_ES=2
 export LIBGL_GL=21
@@ -175,9 +219,14 @@ export LIBGL_SHRINK=2
 export LIBGL_VBO=3
 export LIBGL_MIPMAP=3
 export LIBGL_BATCH=1000
+export LIBGL_NOERROR=1
+export LIBGL_DEFAULT_EGL=1
+export LIBGL_NOINDIRECT=1
 export LD_LIBRARY_PATH="$GAMEDIR/libs:$GAMEDIR:$LD_LIBRARY_PATH"
 
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+
+$GPTOKEYB "wop.aarch64" -c "$GAMEDIR/wop.gptk" &
 
 ./wop.aarch64 \\
   +set fs_basepath "$GAMEDIR" \\
@@ -194,6 +243,7 @@ echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governo
   +set com_soundMegs 32 \\
   +exec autoexec.cfg
 
+$ESUDO killall -9 gptokeyb
 echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 """
     with open(sh_path, "w", encoding="utf-8") as f:
@@ -210,48 +260,55 @@ if __name__ == '__main__':
 
     cpu_count = os.cpu_count() or 2
     
-    # Target Cortex-A35 Flags mit Native .so Zwang
+    cflags = (
+        "-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -ftree-vectorize -fsimd-cost-model=unlimited "
+        "-pipe -fomit-frame-pointer -ffast-math -fno-math-errno -fno-trapping-math "
+        "-fno-semantic-interposition -fno-plt -fmerge-all-constants -falign-functions=16 "
+        "-falign-loops=16 -DNDEBUG -w -fcommon -mno-outline-atomics -funroll-loops"
+    )
+    ldflags = "-Wl,-O1 -Wl,--as-needed -Wl,--sort-common"
+
     build_cmd = (
         f"mkdir -p build && cd build && "
         f"cmake .. -DCMAKE_BUILD_TYPE=Release "
+        f"-DUSE_SDL2=ON "
         f"-DBUILD_GAME_SO=ON "
         f"-DBUILD_GAME_QVM=OFF "
+        f"-DUSE_VOIP=OFF "
+        f"-DUSE_MUMBLE=OFF "
         f"-DCMAKE_C_COMPILER=\"gcc\" "
-        f"-DCMAKE_C_FLAGS=\"-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -pipe -fomit-frame-pointer -ffast-math "
-        f"-ftree-vectorize -fno-math-errno -fno-trapping-math -fno-semantic-interposition -fno-plt "
-        f"-fno-exceptions -fno-rtti -fno-stack-protector -fno-asynchronous-unwind-tables -fmerge-all-constants "
-        f"-falign-functions=16 -falign-loops=16 -DNDEBUG -w -fcommon -fopenmp-simd -flax-vector-conversions "
-        f"-mno-outline-atomics -funroll-loops\" && "
+        f"-DCMAKE_C_FLAGS=\"{cflags}\" "
+        f"-DCMAKE_EXE_LINKER_FLAGS=\"{ldflags}\" "
+        f"-DCMAKE_SHARED_LINKER_FLAGS=\"{ldflags}\" && "
         f"make -j{cpu_count}"
     )
-    print(f"[INFO] Kompiliere World of Padman (Cortex-A35 Native .so), {cpu_count} Jobs")
+    print(f"[INFO] Kompiliere World of Padman (SDL2 + Cortex-A35 Native .so), {cpu_count} Jobs")
     subprocess.run(build_cmd, shell=True, check=True)
 
-    # Struktur für das PortMaster-Artefakt aufbauen
-    dist_dir = "build/artifact/wop"
-    dist_game_dir = os.path.join(dist_dir, "wop")
+    artifact_root = "build/artifact"
+    dist_game_dir = os.path.join(artifact_root, "wop")
     os.makedirs(dist_game_dir, exist_ok=True)
 
-    # Assets crawlen
     mirror_root = "https://files.worldofpadman.net/wop/files/"
     crawl_and_download_mirror(mirror_root, dist_game_dir)
 
-    # Binaries und Shared Libraries kopieren
     built_bin_dir = "build"
     for file in os.listdir(built_bin_dir):
         full_p = os.path.join(built_bin_dir, file)
         if file.endswith(".aarch64") or file == "wop.aarch64":
-            shutil.copy2(full_p, os.path.join(dist_dir, "wop.aarch64"))
-            os.chmod(os.path.join(dist_dir, "wop.aarch64"), 0o755)
+            shutil.copy2(full_p, os.path.join(dist_game_dir, "wop.aarch64"))
+            os.chmod(os.path.join(dist_game_dir, "wop.aarch64"), 0o755)
 
-    # Kopiere kompilierte .so-Dateien
+    so_count = 0
     for root, _, files in os.walk(built_bin_dir):
         for f in files:
             if f.endswith(".so"):
                 shutil.copy2(os.path.join(root, f), os.path.join(dist_game_dir, f))
+                so_count += 1
+    print(f"[INFO] {so_count} native .so Shared Libraries eingebunden.")
 
-    # Konfigurations- und Startdateien generieren
     create_autoexec_cfg(dist_game_dir)
-    create_launcher_script(dist_dir)
+    create_gptk_file(dist_game_dir)
+    create_launcher_script(artifact_root)
 
-    print("[SUCCESS] PortMaster-Verzeichnisstruktur vollständig aufgebaut unter build/artifact/")
+    print("[SUCCESS] SDL2-PortMaster-Artefakt erfolgreich erstellt!")
