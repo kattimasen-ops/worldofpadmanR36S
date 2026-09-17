@@ -82,11 +82,16 @@ def main():
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(dist_dir, exist_ok=True)
 
-    # 1. CMake Konfiguration
+    # Sichere ARM64-Optimierungen für den R36S (explizit ohne fehlerhaftes LTO)
+    optimizations = "-O3 -march=armv8-a"
+
+    # 1. CMake Konfiguration mit Performance-Flags und korrekten Abhängigkeiten
     run_cmd([
         "cmake", "-B", build_dir, "-S", work_dir,
         "-DCMAKE_BUILD_TYPE=Release",
-        "-DUSE_INTERNAL_LIBS=OFF"
+        "-DUSE_INTERNAL_LIBS=OFF",
+        f"-DCMAKE_C_FLAGS={optimizations}",
+        f"-DCMAKE_CXX_FLAGS={optimizations}"
     ])
 
     # 2. Kompilierung
@@ -109,7 +114,11 @@ def main():
         dest_bin = os.path.join(dist_dir, "wop.aarch64")
         shutil.copy2(compiled_bin, dest_bin)
         os.chmod(dest_bin, 0o755)
-        logging.info(f"Binary verifiziert & kopiert: {dest_bin} ({os.path.getsize(dest_bin)} Bytes)")
+        
+        # Sicheres Stripping zur Reduzierung der Dateigröße
+        run_cmd(["strip", "--strip-unneeded", dest_bin])
+        
+        logging.info(f"Binary verifiziert, optimiert & kopiert: {dest_bin} ({os.path.getsize(dest_bin)} Bytes)")
     else:
         logging.error("CRITICAL: Erzeugte Binary 'wop.aarch64' wurde im Build-Ordner nicht gefunden!")
         sys.exit(1)
