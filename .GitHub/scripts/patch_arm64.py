@@ -23,6 +23,21 @@ class DirectoryParser(html.parser.HTMLParser):
                     elif value.lower().endswith(('.pk3', '.cfg', '.dat', '.txt', '.wad')):
                         self.files.append(value)
 
+def patch_cmakelists(filepath="CMakeLists.txt"):
+    if not os.path.exists(filepath):
+        print(f"[WARN] {filepath} nicht gefunden")
+        return False
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+    
+    new_content = re.sub(r'cmake_minimum_required\s*\(\s*VERSION\s+3\.\d+\s*\)', 'cmake_minimum_required(VERSION 3.16)', content)
+    if new_content != content:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        print("[PATCHED] CMake Minimum-Version auf 3.16 angepasst.")
+        return True
+    return False
+
 def patch_q_platform(filepath="code/qcommon/q_platform.h"):
     if not os.path.exists(filepath):
         print(f"[WARN] {filepath} nicht gefunden")
@@ -189,6 +204,7 @@ echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 if __name__ == '__main__':
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", "/work"], check=False)
 
+    patch_cmakelists('CMakeLists.txt')
     patch_q_platform('code/qcommon/q_platform.h')
     inject_neon_math('code/qcommon/q_math.c')
 
