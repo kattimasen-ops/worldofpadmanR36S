@@ -10,15 +10,29 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm64
-    # Nutzt Ubuntu 20.04 um kompatible glibc-Abhängigkeiten für den R36S zu garantieren
     container:
       image: ubuntu:20.04
 
     steps:
-      - name: Install Git & Sudo (Prerequisites)
+      - name: Install System Dependencies
         run: |
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y git sudo curl
+          apt-get install -y \
+              git \
+              sudo \
+              curl \
+              python3 \
+              cmake \
+              build-essential \
+              libsdl2-dev \
+              libopenal-dev \
+              libcurl4-openssl-dev \
+              libjpeg-dev \
+              libvorbis-dev \
+              libogg-dev \
+              ccache \
+              binutils
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -27,19 +41,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ${{ runner.os }}-ccache-ubuntu2004-${{ github.sha }}
+          key: ${{ runner.os }}-ccache-patch-arm64-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-ccache-ubuntu2004-
+            ${{ runner.os }}-ccache-patch-arm64-
 
-      - name: Make Build Script Executable
-        run: chmod +x build.sh
+      - name: Make Patch Script Executable
+        run: chmod +x patch_arm64.py
 
-      - name: Build World of Padman
-        run: ./build.sh
+      - name: Run Patch Script
+        run: python3 patch_arm64.py
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: worldofpadman-r36s-optimized
-          path: artifact/
+          name: worldofpadman-r36s-port
+          path: dist/ports/
           if-no-files-found: error
