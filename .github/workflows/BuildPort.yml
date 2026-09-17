@@ -12,9 +12,9 @@ jobs:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v4
 
-      - name: Clone World of Padman Source Code
+      - name: Clone Official World of Padman Source Code
         run: |
-          git clone --depth=1 https://github.com/worldofpadman/wop-engine.git temp_source
+          git clone --depth=1 https://github.com/PadWorld-Entertainment/worldofpadman.git temp_source
           cp -r temp_source/* .
           rm -rf temp_source
 
@@ -24,7 +24,7 @@ jobs:
       - name: Cache ccache directory
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.ccache
+          path: ${{ github.workspace }}.ccache
           key: ccache-aarch64-wop-${{ github.sha }}
           restore-keys: |
             ccache-aarch64-wop-
@@ -38,7 +38,7 @@ jobs:
             -e CC="ccache gcc" \
             arm64v8/ubuntu:20.04 bash -c "
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update && apt-get install -y build-essential python3 git libsdl2-dev libopenal-dev libcurl4-openssl-dev python3-urllib3 ccache
+            apt-get update && apt-get install -y build-essential python3 git libsdl2-dev libopenal-dev libcurl4-openssl-dev python3-urllib3 ccache cmake
             ccache -M 2G
             cd /work
             python3 .github/scripts/patch_arm64.py
