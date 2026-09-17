@@ -9,14 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Workflow Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Clone Official World of Padman Source Code
-        run: |
-          git clone --depth=1 https://github.com/PadWorld-Entertainment/worldofpadman.git temp_source
-          cp -r temp_source/* .
-          rm -rf temp_source
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -24,7 +18,7 @@ jobs:
       - name: Cache ccache directory
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}.ccache
+          path: ${{ github.workspace }}/.ccache
           key: ccache-aarch64-wop-${{ github.sha }}
           restore-keys: |
             ccache-aarch64-wop-
@@ -41,11 +35,11 @@ jobs:
             apt-get update && apt-get install -y build-essential python3 git libsdl2-dev libopenal-dev libcurl4-openssl-dev python3-urllib3 ccache cmake
             ccache -M 2G
             cd /work
-            python3 .github/scripts/patch_arm64.py
+            python3 .GitHub/scripts/patch_arm64.py
           "
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: world-of-padman-arm64
-          path: build/release-linux-aarch64/
+          path: build/
