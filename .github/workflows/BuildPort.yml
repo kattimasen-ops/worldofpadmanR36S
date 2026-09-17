@@ -66,7 +66,7 @@ jobs:
           export CC="ccache gcc"
           export CXX="ccache g++"
 
-          cd /work
+          cd /work/src
           python3 patch_arm64.py
           BUILD_SCRIPT_EOF
           chmod +x work/build.sh
