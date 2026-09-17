@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-World of Padman - ARM64/RK3326-Build (R36S), angelehnt an das
-Smokin'-Guns-Projekt: native .so-Module (kein QVM), natives GL4ES,
-natives SDL statt Uebersetzungsschicht wo moeglich.
+World of Padman - ARM64/RK3326-Build (R36S):
+Native .so-Module, natives GL4ES, Mali v11.7 (r11p0) Integration und
+PortMaster-Startskript mit Engine-Optimierungen.
 """
 
 import os
@@ -45,26 +45,112 @@ deadzone_scale = 8
 deadzone_delay = 16
 """
 
-LAUNCHER_SCRIPT = """\
-#!/bin/bash
-XDG_DATA_HOME="$APPDATA"
-export XDG_DATA_HOME
+LAUNCHER_SCRIPT = r"""#!/bin/bash
+# PortMaster launch script for World of Padman (RK3326 / M9 Pro, ArkOS4Clone)
 
-GAMEDIR="$4/worldofpadman"
-if [ ! -d "$GAMEDIR" ]; then
-  GAMEDIR="$(dirname "$0")"
+GAMEDIR="/roms/ports/worldofpadman"
+LOG_FILE="${GAMEDIR}/debug.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# --- PortMaster control setup -------------------------------------------
+XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+if [ -d "/opt/system/Tools/PortMaster/" ]; then
+    controlfolder="/opt/system/Tools/PortMaster"
+elif [ -d "/opt/tools/PortMaster/" ]; then
+    controlfolder="/opt/tools/PortMaster"
+elif [ -d "$XDG_DATA_HOME/PortMaster/" ]; then
+    controlfolder="$XDG_DATA_HOME/PortMaster"
+else
+    controlfolder="/roms/ports/PortMaster"
 fi
-cd "$GAMEDIR" || exit
 
-export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:$LD_LIBRARY_PATH"
+if [ -f "${controlfolder}/control.txt" ]; then
+    source "${controlfolder}/control.txt"
+    [ -f "${controlfolder}/mod_${CFW_NAME}.txt" ] && source "${controlfolder}/mod_${CFW_NAME}.txt"
+    get_controls
+else
+    echo "ERROR: ${controlfolder}/control.txt not found - controls will not work." >&2
+fi
+
+cd "$GAMEDIR" || exit 1
+export HOME="${GAMEDIR}"
+mkdir -p "${GAMEDIR}/.wop"
+
+# --- CPU-Performance ----------------------------------------------------
+echo "performance" | $ESUDO tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null 2>&1 || true
+
+# --- Grafik: GL4ES & Mali Tweaks (Ohne UI-Batching) --------------------
+export LIBGL_ES=2
+export LIBGL_GL=1
+export LIBGL_NOTEST=1
+export LIBGL_FB=1
+export LIBGL_FBO=640x480
+export LIBGL_NOERROR=1
+export LIBGL_FORCE16BITS=1
+export LIBGL_VBO=3
+export LIBGL_SHRINK=2
+
+export SDL_VIDEODRIVER=kmsdrm
+export SDL_AUDIODRIVER=alsa
+export LD_LIBRARY_PATH="${GAMEDIR}/libs.aarch64:${GAMEDIR}:${LD_LIBRARY_PATH}"
 
 BINARY="wop.aarch64"
 [ -f "./wop.arm64" ] && BINARY="wop.arm64"
 [ -f "./wop" ] && BINARY="wop"
 
-$GPTOKEYB "$BINARY" -c "./worldofpadman.gptk" &
-./$BINARY +set fs_basepath "$GAMEDIR" +set com_hunkMegs 128
-$ESUDO killall gptokeyb
+# --- Steuerung starten ---------------------------------------------------
+$GPTOKEYB "$BINARY" -c "${GAMEDIR}/worldofpadman.gptk" &
+
+# --- Spiel starten mit Engine-Optimierungen ------------------------------
+LD_PRELOAD="${GAMEDIR}/libs.aarch64/libGL.so.1:${GAMEDIR}/libs.aarch64/libEGL.so.1" \
+  "./$BINARY" \
+  +set fs_basepath "${GAMEDIR}" \
+  +set fs_homepath "${GAMEDIR}" \
+  +set com_zoneMegs 32 \
+  +set com_hunkMegs 256 \
+  +set com_maxfps 60 \
+  +set r_mode -1 \
+  +set r_customwidth 640 \
+  +set r_customheight 480 \
+  +set r_fullscreen 1 \
+  +set r_vertexLight 1 \
+  +set r_ignorehwgamma 1 \
+  +set r_ext_compressed_textures 1 \
+  +set r_ext_framebuffer 0 \
+  +set r_picmip 2 \
+  +set r_lodbias 1 \
+  +set r_subdivisions 8 \
+  +set r_detailtextures 0 \
+  +set r_texturebits 16 \
+  +set r_colorbits 16 \
+  +set r_depthbits 16 \
+  +set r_stencilbits 0 \
+  +set r_flares 0 \
+  +set r_drawSun 0 \
+  +set r_simpleMipMaps 1 \
+  +set r_dynamiclight 0 \
+  +set r_shadows 0 \
+  +set r_fastsky 1 \
+  +set r_swapInterval 0 \
+  +set cg_shadows 0 \
+  +set cg_gibs 0 \
+  +set cg_marks 0 \
+  +set cg_brassTime 0 \
+  +set cg_simpleItems 1 \
+  +set cg_forceModel 1 \
+  +set s_khz 22 \
+  +set s_musicvolume 0 \
+  +set vm_game 0 \
+  +set vm_cgame 0 \
+  +set vm_ui 0
+
+# --- Sauberes Beenden -----------------------------------------------------
+unset LD_PRELOAD
+unset LD_LIBRARY_PATH
+$ESUDO kill -9 $(pidof gptokeyb) 2>/dev/null || true
+printf "\033c" > /dev/tty1 2>/dev/null || true
+echo "Game exited cleanly."
+exit 0
 """
 
 
@@ -104,7 +190,7 @@ def main():
     ], cwd=gl4es_build)
     run(["make", f"-j{os.cpu_count() or 2}"], cwd=gl4es_build)
 
-    for name in ("libGL.so.1", "libEGL.so.1"):
+    for name in ("libGL.so.1",):
         found = None
         for root, _, files in os.walk(gl4es_dir):
             if name in files:
@@ -114,6 +200,24 @@ def main():
             run(["cp", found, os.path.join(libs_out, name)])
         else:
             print(f"[WARN] {name} nicht gefunden - gl4es-Build pruefen.")
+
+    # =========================================================
+    # SCHRITT 1b: Mali v11.7 (r11p0) Treiber einbinden
+    # =========================================================
+    print("[INFO] Lade Mali v11.7 (r11p0) Treiber-Bibliothek herunter...")
+    mali_lib_path = os.path.join(libs_out, "libmali.so")
+    mali_url = "https://github.com/rockchip-linux/libmali/raw/master/lib/aarch64-linux-gnu/libmali-midgard-t860-r11p0-gbm.so"
+
+    try:
+        run(["wget", "-q", "-O", mali_lib_path, mali_url])
+        for egl_file in ["libEGL.so", "libEGL.so.1", "libGLESv2.so", "libGLESv2.so.2"]:
+            target_path = os.path.join(libs_out, egl_file)
+            if os.path.exists(target_path) or os.path.islink(target_path):
+                os.remove(target_path)
+            os.symlink("libmali.so", target_path)
+        print("[INFO] Mali v11.7 r11p0 und Symlinks erfolgreich in libs.aarch64 angelegt.")
+    except Exception as e:
+        print(f"[WARN] Fehler beim Herunterladen/Verknuepfen von Mali v11.7: {e}")
 
     # =========================================================
     # SCHRITT 2: World of Padman selbst per CMake konfigurieren
@@ -140,8 +244,7 @@ def main():
     run(["cmake", "--build", build_dir, "-j", str(os.cpu_count() or 2)])
 
     # =========================================================
-    # SCHRITT 3: Ergebnisse einsammeln (aus build_dir UND work_dir,
-    # da CMake Binaries/Module teils im Quellverzeichnis ablegt)
+    # SCHRITT 3: Ergebnisse einsammeln
     # =========================================================
     print("[INFO] Sammle Binaries und Module ein...")
     search_paths = [build_dir, work_dir]
