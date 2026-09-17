@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 
 
 def run(cmd, cwd=None, check=True):
@@ -204,15 +205,17 @@ def main():
             print(f"[WARN] {name} nicht gefunden - gl4es-Build pruefen.")
 
     # =========================================================
-    # SCHRITT 1b: Mali v11.7 (r11p0) Treiber einbinden
+    # SCHRITT 1b: Mali v11.7 (r11p0) Treiber per Python herunterladen
     # =========================================================
     print("[INFO] Lade Mali v11.7 (r11p0) Treiber-Bibliothek herunter...")
     mali_lib_path = os.path.join(libs_out, "libmali.so")
     mali_url = "https://raw.githubusercontent.com/rockchip-linux/libmali/master/lib/aarch64-linux-gnu/libmali-midgard-t860-r11p0-gbm.so"
 
     try:
-        run(["curl", "-sSL", "-f", "-o", mali_lib_path, mali_url])
-        
+        req = urllib.request.Request(mali_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as response, open(mali_lib_path, "wb") as out_file:
+            out_file.write(response.read())
+
         if not os.path.exists(mali_lib_path) or os.path.getsize(mali_lib_path) == 0:
             raise RuntimeError("Heruntergeladene libmali.so ist 0 KB groß!")
 
@@ -260,7 +263,6 @@ def main():
             for f in files:
                 full_path = os.path.join(root, f)
                 
-                # Ignoriere CMake-interne Hilfsdateien
                 if f.endswith((".cmake", ".txt", ".o", ".py", ".sh", ".h", ".c", ".cpp", ".a", ".check_cache")):
                     continue
 
@@ -274,7 +276,6 @@ def main():
                         dest = os.path.join(game_out, f)
                         print(f"  Kopiere {full_path} -> {dest}")
                         run(["cp", full_path, dest])
-                        # Debug-Symbole entfernen für minimale Dateigröße
                         run(["strip", "--strip-unneeded", dest], check=False)
 
     # =========================================================
