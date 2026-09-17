@@ -1,4 +1,4 @@
-name: Create World of Padman ARM64
+name: Create World of Padman ARM64 Port
 
 on:
   push:
@@ -38,8 +38,8 @@ jobs:
             python3 .GitHub/scripts/patch_arm64.py
           "
 
-      - name: Upload Build Artifacts
+      - name: Upload Complete Port Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: world-of-padman-arm64
-          path: build/
+          name: WorldOfPadman-M9Pro-Port
+          path: build/artifact/
