@@ -22,18 +22,6 @@ class DirectoryParser(html.parser.HTMLParser):
                     elif value.lower().endswith(('.pk3', '.cfg', '.dat', '.txt', '.wad')):
                         self.files.append(value)
 
-def patch_makefile(filepath="Makefile"):
-    if not os.path.exists(filepath):
-        print(f"Error: Makefile not found at {filepath}")
-        return False
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
-    content = re.sub(r'ARCH\s*\?=\s*.*', 'ARCH ?= aarch64', content)
-    content = re.sub(r'BUILD_GAME_SO\s*\?=\s*.*', 'BUILD_GAME_SO ?= 1', content)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(content)
-    return True
-
 def patch_q_platform(filepath="code/qcommon/q_platform.h"):
     if not os.path.exists(filepath):
         print(f"Error: {filepath} not found")
@@ -91,16 +79,6 @@ def inject_neon_math(filepath="code/qcommon/q_math.c"):
             f.write(new_content)
         print("[PATCHED] NEON-Version von Q_rsqrt eingefuegt.")
 
-def inject_openmp_simd(filepath, target_string):
-    if not os.path.exists(filepath):
-        return
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
-    if "#pragma omp simd" not in content and target_string in content:
-        content = content.replace(target_string, f"#pragma omp simd aligned(vertices: 16)\n\t{target_string}")
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
-
 def crawl_and_download_mirror(base_url, target_base_dir, current_subpath=""):
     active_url = urllib.parse.urljoin(base_url, current_subpath)
     try:
@@ -127,29 +105,26 @@ def crawl_and_download_mirror(base_url, target_base_dir, current_subpath=""):
 if __name__ == '__main__':
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", "/work"], check=False)
 
-    patch_makefile('Makefile')
     patch_q_platform('code/qcommon/q_platform.h')
     inject_neon_math('code/qcommon/q_math.c')
-    inject_openmp_simd('code/renderer/tr_mesh.c', 'for ( i = 0 ; i < numVerts ; i++ )')
-    inject_openmp_simd('code/game/bg_pmove.c', 'for ( i = 0 ; i < pml.numtouch ; i++ )')
 
     cpu_count = os.cpu_count() or 2
     cc = os.environ.get("CC", "cc")
 
-    # Aggressive Cortex-A35 Optimierungen für maximale Performance auf dem RK3326
-    compile_cmd = (
-        f"make -j{cpu_count} ARCH=aarch64 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 CC=\"{cc}\" "
-        f"OPTIMIZE=\"-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -pipe -fomit-frame-pointer -ffast-math "
-        f"-ftree-vectorize -fno-math-errno -fno-trapping-math -fno-semantic-interposition -fno-plt "
-        f"-fno-exceptions -fno-rtti -fno-stack-protector -fno-asynchronous-unwind-tables -fmerge-all-constants "
-        f"-falign-functions=16 -falign-loops=16 -DNDEBUG -w -fcommon -fopenmp-simd -flax-vector-conversions "
-        f"-mno-outline-atomics -funroll-loops\" "
-        f"LDFLAGS=\"-Wl,-O1 -Wl,--as-needed -Wl,--strip-all\""
+    # Native Shared Libraries (.so) erzwingen & QVM deaktivieren für Cortex-A35
+    build_cmd = (
+        f"mkdir -p build && cd build && "
+        f"cmake .. -DCMAKE_BUILD_TYPE=Release "
+        f"-DBUILD_GAME_SO=ON "
+        f"-DBUILD_GAME_QVM=OFF "
+        f"-DCMAKE_C_COMPILER=\"gcc\" "
+        f"-DCMAKE_C_FLAGS=\"-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -pipe -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-math-errno -fno-trapping-math -fno-semantic-interposition -fno-plt -fno-exceptions -fno-rtti -fno-stack-protector -fno-asynchronous-unwind-tables -fmerge-all-constants -falign-functions=16 -falign-loops=16 -DNDEBUG -w -fcommon -fopenmp-simd -flax-vector-conversions -mno-outline-atomics -funroll-loops\" && "
+        f"make -j{cpu_count}"
     )
-    print(f"[INFO] Kompiliere World of Padman mit CC={cc}, {cpu_count} parallele Jobs")
-    subprocess.run(compile_cmd, shell=True, check=True)
+    print(f"[INFO] Kompiliere World of Padman (Native .so) via CMake, {cpu_count} parallele Jobs")
+    subprocess.run(build_cmd, shell=True, check=True)
 
-    # Offizieller World of Padman Asset-Mirror (enthält die wop/ .pk3 Dateien)
+    # Asset-Mirror Download für das wop-Verzeichnis
     mirror_root = "https://files.worldofpadman.net/wop/files/"
-    output_mod_dir = "build/release-linux-aarch64/wop"
+    output_mod_dir = "build/wop"
     crawl_and_download_mirror(mirror_root, output_mod_dir)
